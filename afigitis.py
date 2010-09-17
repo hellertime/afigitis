@@ -219,15 +219,16 @@ class WSGIApplication(object):
 		return response.response
 
 class Frontpage(Response):
-	html = '''
+	html = u'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <title>Afigitis</title>
+<meta charset="utf-8"/>
 </head>
 <body>
 </body>
-</html>'''
+</html>'''.encode('utf-8')
 	def do_GET(self):
 		self.addHeader('content-type', 'text/html')
 		self.write(self.html)
