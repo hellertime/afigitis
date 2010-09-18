@@ -44,8 +44,10 @@ class Router(object):
 				def consumeMatches(matcher, template):
 					t = template
 					for match in matcher.finditer(template):
-						yield (re.escape(template[:match.start()]), makeNamedPattern(match))
-						t = t[:m.end()]
+						offset = len(template) - len(t)
+						yield re.escape(t[:match.start() - offset])
+						yield makeNamedPattern(match)
+						t = t[match.end() - offset:]
 
 					yield re.escape(t)
 
@@ -55,12 +57,11 @@ class Router(object):
 		'''Uses pattern match syntax described in: http://pythonpaste.org/webob/do-it-yourself.html'''
 		self.compiledRoutes = [(self.compileRoute(self.matcher, template), response) for template, response in self.routes]
 
-	def match(self, request):
-		for matcher, response in self.compiledRoutes:
+	def dispatch(self, request):
+		for matcher, handler in self.compiledRoutes:
 			match = matcher.match(request.path)
 			if match:
-				request.routervars = match.groupdict()
-				return response(match.groupdict())
+				return handler(request, match.groupdict())
 		else:
 			raise ValueError
 
@@ -167,13 +168,13 @@ class WSGIRequest(object):
 				pass
 
 class Response(object):
-	def __init__(self, request, code = 200, headers = {}, response = []):
+	def __init__(self, request, args = {}, code = 200, headers = {}, response = []):
 		self.request = request or WSGIRequest({})
 		self.code = code
 		self.headers = headers
 		self.response = response
 		if not response:
-			getattr(self, 'do_' + self.request.method)()
+			getattr(self, 'do_' + self.request.method)(**args)
 
 	def addHeader(self, header, value):
 		self.headers[header] = str(value)
@@ -185,14 +186,15 @@ class Response(object):
 	def write(self, data):
 		self.response.append(data)
 
-	def do_DELETE(self): raise HTTPError(405)
-	def do_GET(self): raise HTTPError(405)
-	def do_HEAD(self): raise HTTPError(405)
-	def do_POST(self): raise HTTPError(405)
-	def do_PUT(self): raise HTTPError(405)
+	def do_DELETE(self, **k): raise HTTPError(405)
+	def do_GET(self, **k): raise HTTPError(405)
+	def do_HEAD(self, **k): raise HTTPError(405)
+	def do_POST(self, **k): raise HTTPError(405)
+	def do_PUT(self, **k): raise HTTPError(405)
 
 class WSGIApplication(object):
-	def __init__(self, router = None):
+	def __init__(self, repo, router = None):
+		self.repo = repo
 		self.router = router
 
 	def parseConfiguration(self, configuration):
@@ -202,9 +204,10 @@ class WSGIApplication(object):
 		'''Called by a WSGI compliant wrapper'''
 		request = None
 		try:
+			environ['afigits.repo'] = self.repo
 			request = WSGIRequest(environ)
 			try:
-				response = self.router.match(request)
+				response = self.router.dispatch(request)
 			except ValueError:
 				raise HTTPError(404, "The requested URL %s was not found on this server" % request.path)
 		except HTTPError, error:
@@ -227,17 +230,148 @@ class Frontpage(Response):
 <meta charset="utf-8"/>
 </head>
 <body>
+<header>
+<section id="logo">
+<h1>Afigitis</h1>
+</section>
+<nav>
+</nav>
+</header>
+<section id="document">
+</section>
+<footer>
+</footer>
+<script>
+var Prelude = (function () {
+	var ajax = function (options) {
+		var method  = options.method || "GET"
+			 ,request = xmlhttp()
+			 ,success = options.success
+			 ,url     = options.url || window.location;
+
+		request.open(method, url, true);
+		request.onreadystatechange = function () {
+			if (request.readyState === 4 && (request.status === 200 || request.status === 304))
+			{
+				try { success(request.responseText) }
+				catch (e) { /* noop */ }
+			}
+		};
+	};
+	var element = function (type, attributes) {
+		var e = window.document.createElement(type);
+		for (var a in attributes)
+		{
+			e[a] = attributes[a];
+		}
+		return e;
+	};
+	var text = function (text, attributes) {
+		var t = window.document.createTextNode(text);
+		for (var a in attributes)
+		{
+			t[a] = attributes[a];
+		}
+		return t;
+	};
+	var reify = function (jsonp) {
+		if (windows.execScript)
+		{
+			window.execScript(jsonp, "JavaScript");
+		}
+		else if (window.eval)
+		{
+			window.eval("var _evalDirect_ = 1;");
+			var evalDirect = (typeof window._evalDirect_ !== "undefined");
+			delete window._evalDirect_;
+
+			if (evalDirect)
+			{
+				window.eval(jsonp);
+			}
+			else
+			{
+				var script = element("script",{type: "text/javascript", defer: false});
+				script.appendChild(text(jsonp));
+				window.document.body.appendChild(script);
+				window.document.body.removeChild(script);
+			}
+		}
+	};
+	var xmlhttp = function () {
+		var r = null;
+		if (window.ActiveXObject)
+		{
+			var Axo = ActiveXObject
+			r = new Axo("Msxml2.XMLHTTP") || new Axo("Microsoft.XMLHTTP");
+		}
+		else if (window.XMLHttpRequest)
+		{
+			r = new XMLHttpRequest;
+		}
+		return r;
+	};
+}());
+
+var Afigitis = (function () {
+	var callback = (function () {
+		var callbacks = {};
+		return {
+			register: function (f) {
+				var id = Math.floor(Math.random()*1000001).toString();
+				callbacks[id] = f;
+				return id;
+			}
+		, run: function (id, json) {
+				var ret = callbacks[id](json);
+				delete callbacks[id];
+				return ret;
+			}
+		};
+	}());
+	var rinvoke = function (method, cb, options) {
+		var id    = callback.register(cb)
+			 ,query = []; // holds rpc query params
+
+		delete options.callback;
+		for (var opt in options)
+		{
+			query.push(opt+'='+escape(options[opt].toString()))
+		}
+		xmlhttp({url: '/' + ['api',method,id].join('/') + '/?' + query.join('&')
+						,success: reify});
+	};
+
+	// Test callback
+	rinvoke('xxx', function (json) { alert(json); });
+}());
+</script>
 </body>
 </html>'''.encode('utf-8')
 	def do_GET(self):
 		self.addHeader('content-type', 'text/html')
 		self.write(self.html)
 
+class Api(Response):
+	def do_GET(self, method = None, continuation = None):
+		self.addHeader('content-type', 'application/json')
+		self.write('Afigitis.callback.run(%s, {"a": "b"})' % (continuation))
+
 if __name__ == '__main__':
+	import argparse # requires 2.7 or install argparse
 	import wsgiref.simple_server
+
+	parser = argparse.ArgumentParser()
+	subparsers = parser.add_subparsers(help='commands')
+	serverParser = subparsers.add_parser('server', help='Start HTTP Server')
+	serverParser.add_argument('repository', action='store', help='Git/afigitis repository')
+
+	options = parser.parse_args()
+
 	router = Router()
 	router.addRoute('/', Frontpage)
+	router.addRoute('/api/{method}/{continuation:\d+}/', Api)
 	router.compileRoutes()
-	application = WSGIApplication(router = router)
+	application = WSGIApplication(options.repository, router = router)
 	httpd = wsgiref.simple_server.make_server('', 8080, application)
 	httpd.serve_forever()
