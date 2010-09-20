@@ -168,13 +168,15 @@ class WSGIRequest(object):
 				pass
 
 class Response(object):
-	def __init__(self, request, args = {}, code = 200, headers = {}, response = []):
+	def __init__(self, request, args = {}, code = 200, headers = {}, withResponse = None):
 		self.request = request or WSGIRequest({})
 		self.code = code
 		self.headers = headers
-		self.response = response
-		if not response:
+		self.response = []
+		if not withResponse:
 			getattr(self, 'do_' + self.request.method)(**args)
+		else:
+			self.write(withResponse)
 
 	def addHeader(self, header, value):
 		self.headers[header] = str(value)
@@ -203,6 +205,7 @@ class WSGIApplication(object):
 	def __call__(self, environ, start_response):
 		'''Called by a WSGI compliant wrapper'''
 		request = None
+		response = None
 		try:
 			environ['afigits.repo'] = self.repo
 			request = WSGIRequest(environ)
@@ -211,9 +214,9 @@ class WSGIApplication(object):
 			except ValueError:
 				raise HTTPError(404, "The requested URL %s was not found on this server" % request.path)
 		except HTTPError, error:
-			response = Response(request, code = error.status, response = [error.message])
+			response = Response(request, code = error.status, withResponse = error.message)
 		except:
-			response = Response(request, code = 500, headers = {'content-type': 'text/html'}, response = [cgitb.html(sys.exc_info())])
+			response = Response(request, code = 500, headers = {'content-type': 'text/html'}, withResponse = cgitb.html(sys.exc_info()))
 
 		contentLength = sum(map(lambda o: len(str(o)), response.response))
 		response.addHeader('content-length', contentLength)
@@ -257,6 +260,7 @@ var Prelude = (function () {
 				catch (e) { /* noop */ }
 			}
 		};
+		request.send(null);
 	};
 	var element = function (type, attributes) {
 		var e = window.document.createElement(type);
@@ -275,7 +279,7 @@ var Prelude = (function () {
 		return t;
 	};
 	var reify = function (jsonp) {
-		if (windows.execScript)
+		if (window.execScript)
 		{
 			window.execScript(jsonp, "JavaScript");
 		}
@@ -311,6 +315,14 @@ var Prelude = (function () {
 		}
 		return r;
 	};
+
+	// export the public methods
+	return {
+		ajax: ajax
+	, element: element
+	, reify: reify
+	, text: text
+	};
 }());
 
 var Afigitis = (function () {
@@ -333,17 +345,19 @@ var Afigitis = (function () {
 		var id    = callback.register(cb)
 			 ,query = []; // holds rpc query params
 
-		delete options.callback;
 		for (var opt in options)
 		{
 			query.push(opt+'='+escape(options[opt].toString()))
 		}
-		xmlhttp({url: '/' + ['api',method,id].join('/') + '/?' + query.join('&')
-						,success: reify});
+		Prelude.ajax({url: '/' + ['api',method,id].join('/') + '/?' + query.join('&')
+								,success: Prelude.reify});
 	};
 
-	// Test callback
-	rinvoke('xxx', function (json) { alert(json); });
+	// export public interface
+	return {
+		ceval: callback.run
+	,	rinvoke: rinvoke
+	};
 }());
 </script>
 </body>
@@ -355,7 +369,7 @@ var Afigitis = (function () {
 class Api(Response):
 	def do_GET(self, method = None, continuation = None):
 		self.addHeader('content-type', 'application/json')
-		self.write('Afigitis.callback.run(%s, {"a": "b"})' % (continuation))
+		self.write('Afigitis.ceval(%s, {"a": "b"})' % (continuation))
 
 if __name__ == '__main__':
 	import argparse # requires 2.7 or install argparse
